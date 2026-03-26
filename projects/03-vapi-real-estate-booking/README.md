@@ -94,7 +94,7 @@ Stevenson is configured with the following Vapi settings:
 
 1. **Clone this repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/automation-portfolio.git
+   git clone https://github.com/evance262/automation-portfolio.git
    cd automation-portfolio/projects/03-vapi-real-estate-booking
    ```
 
