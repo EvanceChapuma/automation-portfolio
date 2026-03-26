@@ -96,7 +96,7 @@ sequenceDiagram
 
 1. **Clone this repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/automation-portfolio.git
+   git clone https://github.com/evance262/automation-portfolio.git
    cd automation-portfolio/projects/02-whatsapp-lead-agent
    ```
 
