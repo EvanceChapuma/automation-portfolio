@@ -169,12 +169,8 @@ Stevenson's system prompt includes escalation instructions: after two failed cla
 A couple of representative screenshots from the project (click to view full size).
 
 <p align="center">
-</p>
-
-<p align="center">
    <a href="screenshots/bookingConfirmation.png"><img src="screenshots/bookingConfirmation.png" alt="Booking confirmation" width="360"/></a>
    <a href="screenshots/vapiDash.png"><img src="screenshots/vapiDash.png" alt="Vapi dashboard" width="360"/></a>
-</p>
 </p>
 
 
