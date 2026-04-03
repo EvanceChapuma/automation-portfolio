@@ -1,0 +1,546 @@
+{
+  "name": "05 - Appointment Booking Confirmation & Reminder System",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-booking",
+        "options": {}
+      },
+      "id": "webhook-booking",
+      "name": "New Booking Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "new-booking"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and normalize booking data from various webhook formats\n// Supports: Calendly, generic webhooks\nconst body = $input.first().json.body || $input.first().json;\nconst payload = body.payload || body;\n\nconst clientName = payload.name || payload.invitee?.name || payload.full_name || '';\nconst clientEmail = payload.email || payload.invitee?.email || '';\nconst clientPhone = payload.phone_number || payload.invitee?.phone_number || payload.phone || '';\nconst appointmentStart = payload.scheduled_event?.start_time || payload.event?.start_time || payload.start_time || '';\nconst appointmentEnd = payload.scheduled_event?.end_time || payload.event?.end_time || payload.end_time || '';\nconst serviceType = payload.scheduled_event?.name || payload.event_type?.name || payload.service || 'Consultation';\nconst meetingLocation = payload.scheduled_event?.location?.join_url || payload.location || payload.meeting_url || 'To be confirmed';\nconst cancelUrl = payload.cancel_url || payload.invitee?.cancel_url || '';\nconst rescheduleUrl = payload.reschedule_url || payload.invitee?.reschedule_url || '';\n\n// Validate required fields\nif (!clientName || !appointmentStart) {\n  throw new Error(`Missing required booking fields. Got: name='${clientName}', start='${appointmentStart}'`);\n}\n\nconsole.log(`New booking: ${clientName} for ${serviceType} at ${appointmentStart}`);\n\nreturn [{\n  json: {\n    clientName,\n    clientEmail,\n    clientPhone,\n    appointmentStart,\n    appointmentEnd,\n    serviceType,\n    meetingLocation,\n    cancelUrl,\n    rescheduleUrl,\n    bookedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract-booking",
+      "name": "Extract Booking Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pre-flight: calculate reminder times and check feasibility\nconst booking = $input.first().json;\nconst startTime = new Date(booking.appointmentStart);\nconst now = new Date();\n\nif (isNaN(startTime.getTime())) {\n  throw new Error(`Invalid appointment start time: ${booking.appointmentStart}`);\n}\n\nconst hoursUntilAppt = (startTime.getTime() - now.getTime()) / (1000 * 60 * 60);\nconst send24hReminder = hoursUntilAppt > 25; // Only send if more than 25 hours away\nconst send1hReminder = hoursUntilAppt > 1.5;  // Only send if more than 90 min away\n\n// Calculate reminder timestamps\nconst reminder24h = new Date(startTime.getTime() - 24 * 60 * 60 * 1000).toISOString();\nconst reminder1h = new Date(startTime.getTime() - 60 * 60 * 1000).toISOString();\nconst trackingTime = new Date(startTime.getTime() + 30 * 60 * 1000).toISOString(); // 30min after start\n\nconsole.log(`Booking in ${hoursUntilAppt.toFixed(1)}h. 24h reminder: ${send24hReminder}, 1h reminder: ${send1hReminder}`);\n\nreturn [{\n  json: {\n    ...booking,\n    hoursUntilAppt,\n    send24hReminder,\n    send1hReminder,\n    reminder24hTime: reminder24h,\n    reminder1hTime: reminder1h,\n    trackingTime\n  }\n}];"
+      },
+      "id": "calculate-times",
+      "name": "Calculate Reminder Times",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary"
+        },
+        "start": "={{ $json.appointmentStart }}",
+        "end": "={{ $json.appointmentEnd || (new Date(new Date($json.appointmentStart).getTime() + 60*60*1000)).toISOString() }}",
+        "additionalFields": {
+          "attendees": "={{ $json.clientEmail }}",
+          "description": "=Client: {{ $json.clientName }}\nEmail: {{ $json.clientEmail }}\nPhone: {{ $json.clientPhone }}\nService: {{ $json.serviceType }}\nBooked at: {{ $json.bookedAt }}",
+          "location": "={{ $json.meetingLocation }}",
+          "sendUpdates": "all",
+          "summary": "={{ $json.serviceType }} - {{ $json.clientName }}"
+        }
+      },
+      "id": "gcal-create",
+      "name": "Create Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        912,
+        400
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "imqMNxOAtfFYVIP9",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge calendar result with booking data\nconst calResult = $input.first().json;\nconst booking = $('Calculate Reminder Times').first().json;\n\nreturn [{\n  json: {\n    ...booking,\n    calendarEventId: calResult.id || calResult.htmlLink || 'N/A'\n  }\n}];"
+      },
+      "id": "merge-cal-data",
+      "name": "Merge Calendar Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "from": "={{ $env.TWILIO_WHATSAPP_NUMBER }}",
+        "to": "=whatsapp:{{ $json.clientPhone }}",
+        "message": "=Hi {{ $json.clientName }}! ✅ Your {{ $json.serviceType }} is confirmed.\n\n📅 {{ DateTime.fromISO($json.appointmentStart).setZone('Africa/Blantyre').toFormat('cccc, dd MMMM yyyy') }}\n🕐 {{ DateTime.fromISO($json.appointmentStart).setZone('Africa/Blantyre').toFormat('hh:mm a') }} CAT\n📍 {{ $json.meetingLocation }}\n\nReply CANCEL to cancel or RESCHEDULE to change your time.",
+        "options": {}
+      },
+      "id": "twilio-confirm",
+      "name": "WhatsApp Booking Confirmation",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        400
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilio-cred",
+          "name": "Twilio API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "send-24h",
+              "leftValue": "={{ $json.send24hReminder }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-24h",
+      "name": "Send 24h Reminder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $json.reminder24hTime }}"
+      },
+      "id": "wait-24h",
+      "name": "Wait Until 24h Before",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1808,
+        224
+      ],
+      "webhookId": "88a2136b-abf5-4e24-bd82-efa98d2063c5",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "from": "={{ $env.TWILIO_WHATSAPP_NUMBER }}",
+        "to": "=whatsapp:{{ $json.clientPhone }}",
+        "message": "=⏰ Reminder: Your {{ $json.serviceType }} is tomorrow!\n\n📅 {{ DateTime.fromISO($json.appointmentStart).setZone('Africa/Blantyre').toFormat('cccc, dd MMMM yyyy') }}\n🕐 {{ DateTime.fromISO($json.appointmentStart).setZone('Africa/Blantyre').toFormat('hh:mm a') }} CAT\n📍 {{ $json.meetingLocation }}\n\nSee you there! 👋",
+        "options": {}
+      },
+      "id": "twilio-24h",
+      "name": "24h Reminder",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        2032,
+        224
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilio-cred",
+          "name": "Twilio API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "send-1h",
+              "leftValue": "={{ $json.send1hReminder }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-1h",
+      "name": "Send 1h Reminder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2256,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $json.reminder1hTime }}"
+      },
+      "id": "wait-1h",
+      "name": "Wait Until 1h Before",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2480,
+        304
+      ],
+      "webhookId": "686ba93e-5437-4388-a1ac-b979d08c309b",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "from": "={{ $env.TWILIO_WHATSAPP_NUMBER }}",
+        "to": "=whatsapp:{{ $json.clientPhone }}",
+        "message": "=🔔 Starting in 1 hour!\n\nYour {{ $json.serviceType }} begins at {{ DateTime.fromISO($json.appointmentStart).setZone('Africa/Blantyre').toFormat('hh:mm a') }} CAT.\n\n{{ $json.meetingLocation.startsWith('http') ? '🔗 Join here: ' + $json.meetingLocation : '📍 ' + $json.meetingLocation }}",
+        "options": {}
+      },
+      "id": "twilio-1h",
+      "name": "1h Reminder",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        2704,
+        304
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilio-cred",
+          "name": "Twilio API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $('Calculate Reminder Times').first().json.trackingTime }}"
+      },
+      "id": "wait-tracking",
+      "name": "Wait for Appointment to End",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1584,
+        544
+      ],
+      "webhookId": "50e7f3fc-edc3-4597-a0c9-eb2b1d7e95de",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Appointments",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Client Name": "={{ $('Calculate Reminder Times').first().json.clientName }}",
+            "Client Email": "={{ $('Calculate Reminder Times').first().json.clientEmail }}",
+            "Client Phone": "={{ $('Calculate Reminder Times').first().json.clientPhone }}",
+            "Service Type": "={{ $('Calculate Reminder Times').first().json.serviceType }}",
+            "Start Time": "={{ $('Calculate Reminder Times').first().json.appointmentStart }}",
+            "End Time": "={{ $('Calculate Reminder Times').first().json.appointmentEnd }}",
+            "Location": "={{ $('Calculate Reminder Times').first().json.meetingLocation }}",
+            "Booked At": "={{ $('Calculate Reminder Times').first().json.bookedAt }}",
+            "Status": "Completed"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-log",
+      "name": "Log Appointment to Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1808,
+        544
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-cred",
+          "name": "Google Sheets OAuth2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $input.first().json;\nreturn [{\n  json: {\n    errorMessage: error.execution?.error?.message || 'Unknown error',\n    workflowName: 'Appointment Booking & Reminders',\n    nodeName: error.execution?.lastNodeExecuted || 'Unknown node',\n    executionId: error.execution?.id || 'N/A',\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "format-error",
+      "name": "Format Error Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#automation-errors",
+          "mode": "name"
+        },
+        "text": "=*⚠️ Workflow Error: Appointment Booking & Reminders*\n*Error:* {{ $json.errorMessage }}\n*Node:* {{ $json.nodeName }}\n*Execution:* {{ $json.executionId }}\n*Time:* {{ $json.timestamp }}",
+        "otherOptions": {}
+      },
+      "id": "slack-error",
+      "name": "Slack - Error Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        688,
+        768
+      ],
+      "webhookId": "b51e7f32-6c1e-472a-864c-36b75e7daa4f",
+      "disabled": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "New Booking Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Booking Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Booking Data": {
+      "main": [
+        [
+          {
+            "node": "Calculate Reminder Times",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Reminder Times": {
+      "main": [
+        [
+          {
+            "node": "Create Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Merge Calendar Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Calendar Data": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Booking Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Booking Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Send 24h Reminder?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wait for Appointment to End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send 24h Reminder?": {
+      "main": [
+        [
+          {
+            "node": "Wait Until 24h Before",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send 1h Reminder?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until 24h Before": {
+      "main": [
+        [
+          {
+            "node": "24h Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "24h Reminder": {
+      "main": [
+        [
+          {
+            "node": "Send 1h Reminder?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send 1h Reminder?": {
+      "main": [
+        [
+          {
+            "node": "Wait Until 1h Before",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Wait Until 1h Before": {
+      "main": [
+        [
+          {
+            "node": "1h Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Appointment to End": {
+      "main": [
+        [
+          {
+            "node": "Log Appointment to Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Error Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Details": {
+      "main": [
+        [
+          {
+            "node": "Slack - Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "ab5d3237-58f2-4eb5-b1a7-cd67c04bc7a2",
+  "meta": {
+    "instanceId": "bc52a782c5ff6557782de50397354b618888d5105091f91f804f057444f5ed1f"
+  },
+  "id": "bQaA90y1RwgPtdFs",
+  "tags": []
+}
