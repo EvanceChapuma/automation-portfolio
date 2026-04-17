@@ -37,6 +37,7 @@ I don't just connect APIs. I design systems that handle edge cases, fail gracefu
 | 04 | [Vapi Customer Support Agent](#04-vapi-customer-support-agent) | Voice AI agent that handles Tier-1 support calls with FAQ resolution | Vapi · n8n · OpenAI | [→](./projects/04-vapi-customer-support/) |
 | 05 | [Multi-Agent Personal Assistant](#05-multi-agent-personal-assistant) | Orchestrated AI assistant managing email, calendar, CRM, and messaging | n8n · HubSpot · Gmail · Telegram | [→](./projects/05-multi-agent-personal-assistant/) |
 | 06 | [WhatsApp Event Registration System](#06-whatsapp-event-registration-system) | End-to-end event registration via WhatsApp: PDF ingestion, payment verification, seat assignment | n8n · Airtable · Twilio · OpenAI Vision | [→](./projects/06-whatsapp-event-registration/) |
+| 07 | [AI Law Firm Receptionist](#07-ai-law-firm-receptionist) | 8-workflow autonomous receptionist — triage, intake, scheduling, conflict checks, billing, documents | n8n · Claude · Clio · Google Calendar · Zoom · Gmail · Slack | [→](./projects/07-law-firm-receptionist/) |
 
 ---
 
@@ -102,6 +103,16 @@ A complete event management pipeline over WhatsApp. Ingests event details from a
 
 ---
 
+### 07 — AI Law Firm Receptionist
+
+An 8-workflow autonomous receptionist stack for law firms. An AI triage agent classifies every inbound enquiry by intent and urgency, then dispatches to specialist sub-workflows: new client intake creates a Clio contact and matter; appointment scheduling sends clickable booking emails and auto-creates Zoom meetings; a parallel conflict-of-interest checker searches Clio for name and email matches; document generation drafts engagement letters and intake questionnaires; billing pulls outstanding Clio invoices and time entries into a branded HTML summary. All client-facing emails use a consistent branded HTML template. Attorneys receive Slack alerts for emergencies, new clients, and outstanding balances, plus an 8am morning digest of overnight messages.
+
+**Impact:** A solo attorney or small firm can handle 3× the enquiry volume with zero reception staff — and no client message goes unanswered, even at 2am.
+
+[View project →](./projects/07-law-firm-receptionist/)
+
+---
+
 ## Tech Stack Overview
 
 ![Tech Stack](./assets/tech_stack_mindmap_v2.svg)
@@ -118,7 +129,8 @@ automation-portfolio/
 │   ├── 03-vapi-real-estate-booking/
 │   ├── 04-vapi-customer-support/
 │   ├── 05-multi-agent-personal-assistant/
-│   └── 06-whatsapp-event-registration/
+│   ├── 06-whatsapp-event-registration/
+│   └── 07-law-firm-receptionist/
 ├── templates/
 │   └── workflow-readme-template.md
 ├── .github/
