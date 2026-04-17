@@ -37,30 +37,30 @@ Every inbound message — at any hour — receives an immediate, professional re
 
 ```mermaid
 flowchart TD
-    A([📧 Email / Web / WhatsApp / Phone]) --> B[00 · Inbound Router\nAI Triage Agent]
+    A([Inbound Message\nEmail / Web / WhatsApp / Phone]) --> B[00 - Inbound Router\nAI Triage Agent]
 
     B --> C{Emergency?}
-    C -->|Yes| D[🚨 Slack Emergency Alert\nImmediate attorney notification]
+    C -->|Yes| D[Slack Emergency Alert\nImmediate attorney notification]
     C -->|No| E{Business Hours?}
 
-    E -->|After Hours| F[07 · Morning Digest\nQueue for 8am summary]
+    E -->|After Hours| F[07 - Morning Digest\nQueued for 8am summary]
     E -->|Business Hours| G{Intent Switch}
 
-    G -->|new_client| H[01 · Client Intake\nClio contact + matter creation]
-    G -->|appointment| I[02 · Appointment Scheduling\nCalendar + Zoom + Email]
-    G -->|existing_client| J[05 · Client Communications\nMatter lookup + AI response]
-    G -->|billing| K[06 · Billing & Time\nClio bills + time entries]
+    G -->|new_client| H[01 - Client Intake\nClio contact + matter creation]
+    G -->|appointment| I[02 - Appointment Scheduling\nCalendar + Zoom + Email]
+    G -->|existing_client| J[05 - Client Communications\nMatter lookup + AI response]
+    G -->|billing| K[06 - Billing and Time\nClio bills + time entries]
 
-    H --> L[03 · Conflict of Interest Check\nParallel Clio search]
-    H --> M[04 · Document Generation\nEngagement letter + questionnaire]
+    H --> L[03 - Conflict of Interest Check\nParallel Clio search]
+    H --> M[04 - Document Generation\nEngagement letter + questionnaire]
 
-    I --> N[📅 Google Calendar Event\nZoom meeting created]
-    N --> O[📧 Confirmation Email\nBooking buttons + HTML template]
-    O --> P[⏰ 24h Reminder Email]
+    I --> N[Google Calendar Event\nZoom meeting created]
+    N --> O[Confirmation Email\nBooking buttons + HTML template]
+    O --> P[24h Reminder Email]
 
-    K --> Q[📧 Branded Billing Summary\nHTML table + payment instructions]
+    K --> Q[Branded Billing Summary\nHTML table + payment instructions]
     Q --> R{Outstanding Balance?}
-    R -->|Yes| S[💰 Slack Finance Alert]
+    R -->|Yes| S[Slack Finance Alert]
 ```
 
 ---
