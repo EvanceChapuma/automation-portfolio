@@ -1,0 +1,390 @@
+{
+  "metadata": {
+    "name": "Candidate Pipeline — Main",
+    "description": "Full 16-step candidate intake pipeline. Triggered by a Typeform CV submission. Parses the CV with Claude AI, creates an Airtable record, matches skills against open roles, branches on match/no-match, creates a ClickUp review task, sends an acknowledgement email, delays 3 days, then sends a Slack reminder to the recruiter if no action has been taken.",
+    "platform": "Zapier",
+    "version": "1.0.0",
+    "plan_required": "Professional",
+    "status": "production",
+    "tags": ["recruitment", "hr", "typeform", "airtable", "clickup", "gmail", "slack", "claude-ai"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "type": "trigger",
+      "label": "New Typeform Entry",
+      "app": "Typeform",
+      "event": "New Entry",
+      "config": {
+        "form": "{{TYPEFORM_FORM_ID}}",
+        "note": "Connect to the 'Candidate CV Submission' form. Typeform-hosted file URLs expire — the CV file URL must be used or archived within this Zap run."
+      },
+      "output_variables": {
+        "candidate_name": "Full Name field",
+        "candidate_email": "Email Address field",
+        "candidate_phone": "Phone Number field",
+        "candidate_location": "Location / City field",
+        "current_title": "Current Job Title field",
+        "years_experience": "Years of Experience field",
+        "cv_file_url": "CV / Resume Upload field (Typeform-hosted URL)",
+        "cover_note": "Cover Note field",
+        "role_interest": "Roles Interested In field (multi-select)",
+        "linkedin_url": "LinkedIn URL field"
+      }
+    },
+    {
+      "step": 2,
+      "type": "action",
+      "label": "Deduplication Check — Find Existing Candidate",
+      "app": "Airtable",
+      "event": "Find Record",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Candidates",
+        "search_field": "Email",
+        "search_value": "{{candidate_email}}",
+        "note": "Check whether this email already exists in Airtable. If a record is found, step 3 will update it; if not, step 3 will create it."
+      },
+      "output_variables": {
+        "existing_record_id": "Airtable Record ID (empty if new candidate)",
+        "existing_status": "Status field value (empty if new candidate)"
+      }
+    },
+    {
+      "step": 3,
+      "type": "action",
+      "label": "Parse CV — Claude AI via Anthropic API",
+      "app": "Webhooks by Zapier",
+      "event": "POST",
+      "config": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "headers": {
+          "x-api-key": "{{ANTHROPIC_API_KEY}}",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "payload_type": "json",
+        "data": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 1024,
+          "system": "You are a CV parser for a recruitment system. Extract a structured JSON object from the candidate information provided. Return ONLY valid JSON with no preamble or explanation.",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Candidate Name: {{candidate_name}}\nCurrent Title: {{current_title}}\nYears of Experience: {{years_experience}}\nRoles Interested In: {{role_interest}}\nCover Note: {{cover_note}}\n\nExtract the following fields:\n- skills: array of strings (technical and soft skills identified)\n- seniority: one of [\"Junior\", \"Mid\", \"Senior\", \"Lead\", \"Executive\"]\n- primary_role_type: one of [\"Engineering\", \"Design\", \"Product\", \"Marketing\", \"Operations\", \"Sales\", \"Legal\", \"Finance\", \"Other\"]\n- availability_signal: one of [\"Immediate\", \"1 Month\", \"3 Months\", \"Unknown\"]\n- summary: one sentence summary of the candidate profile"
+            }
+          ]
+        },
+        "note": "Calls the Anthropic API directly. The response JSON contains the parsed CV fields. Follow immediately with step 4 (Code) to extract individual fields."
+      },
+      "output_variables": {
+        "claude_response_body": "Full API response JSON string — pass content[0].text to step 4"
+      }
+    },
+    {
+      "step": 4,
+      "type": "action",
+      "label": "Extract Parsed Fields — Code by Zapier (JavaScript)",
+      "app": "Code by Zapier",
+      "event": "Run Javascript",
+      "config": {
+        "input_data": {
+          "claude_response": "{{step_3_content_0_text}}"
+        },
+        "code": "try {\n  const raw = inputData.claude_response;\n  const parsed = JSON.parse(raw);\n  return {\n    skills: Array.isArray(parsed.skills) ? parsed.skills.join(', ') : '',\n    seniority: parsed.seniority || 'Unknown',\n    primary_role_type: parsed.primary_role_type || 'Other',\n    availability_signal: parsed.availability_signal || 'Unknown',\n    summary: parsed.summary || '',\n    parse_success: 'true'\n  };\n} catch (e) {\n  return {\n    skills: '',\n    seniority: 'Unknown',\n    primary_role_type: 'Other',\n    availability_signal: 'Unknown',\n    summary: '',\n    parse_success: 'false',\n    parse_error: e.message\n  };\n}",
+        "note": "Wraps JSON.parse in a try/catch. On failure, sets parse_success=false so step 5 can set status to 'Needs Manual Review' instead of 'New'."
+      },
+      "output_variables": {
+        "skills": "Comma-separated skill list",
+        "seniority": "Junior / Mid / Senior / Lead / Executive",
+        "primary_role_type": "Engineering / Design / Product / etc.",
+        "availability_signal": "Immediate / 1 Month / 3 Months / Unknown",
+        "summary": "One-sentence AI profile summary",
+        "parse_success": "true or false",
+        "parse_error": "Error message if parse failed"
+      }
+    },
+    {
+      "step": 5,
+      "type": "action",
+      "label": "Compute Initial Status — Code by Zapier (JavaScript)",
+      "app": "Code by Zapier",
+      "event": "Run Javascript",
+      "config": {
+        "input_data": {
+          "parse_success": "{{step_4_parse_success}}",
+          "existing_record_id": "{{step_2_existing_record_id}}"
+        },
+        "code": "const parseOk = inputData.parse_success === 'true';\nconst isResubmission = inputData.existing_record_id && inputData.existing_record_id.trim() !== '';\nreturn {\n  initial_status: parseOk ? 'New' : 'Needs Manual Review',\n  is_resubmission: isResubmission ? 'true' : 'false'\n};",
+        "note": "Determines whether to set status to 'New' or 'Needs Manual Review' and flags resubmissions."
+      },
+      "output_variables": {
+        "initial_status": "New or Needs Manual Review",
+        "is_resubmission": "true or false"
+      }
+    },
+    {
+      "step": 6,
+      "type": "action",
+      "label": "Upsert Candidate Record in Airtable",
+      "app": "Airtable",
+      "event": "Create or Update Record",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Candidates",
+        "record_id_to_update": "{{step_2_existing_record_id}}",
+        "note": "If existing_record_id is populated (resubmission) this updates; otherwise creates a new record. Set Resubmission checkbox = true when is_resubmission = true.",
+        "field_mapping": {
+          "Name": "{{candidate_name}}",
+          "Email": "{{candidate_email}}",
+          "Phone": "{{candidate_phone}}",
+          "Location": "{{candidate_location}}",
+          "Current Title": "{{current_title}}",
+          "Years Experience": "{{years_experience}}",
+          "Skills": "{{step_4_skills}}",
+          "Seniority": "{{step_4_seniority}}",
+          "Role Type": "{{step_4_primary_role_type}}",
+          "Availability": "{{step_4_availability_signal}}",
+          "AI Summary": "{{step_4_summary}}",
+          "Cover Note": "{{cover_note}}",
+          "LinkedIn URL": "{{linkedin_url}}",
+          "CV File URL": "{{cv_file_url}}",
+          "Source": "Typeform",
+          "Status": "{{step_5_initial_status}}",
+          "Submission Date": "{{zap_meta_humanize_time}}",
+          "Resubmission": "{{step_5_is_resubmission}}"
+        }
+      },
+      "output_variables": {
+        "airtable_record_id": "Airtable Record ID — used in all subsequent update steps"
+      }
+    },
+    {
+      "step": 7,
+      "type": "action",
+      "label": "Lookup Open Roles in Airtable",
+      "app": "Airtable",
+      "event": "Find Records",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Open Roles",
+        "filter_by_formula": "AND({Status}='Open', {Role Type}='{{step_4_primary_role_type}}')",
+        "sort_field": "Role Title",
+        "sort_direction": "ascending",
+        "note": "Returns all open roles matching the candidate's parsed role type. If zero results, the match score step returns 0 and the Paths step routes to no-match."
+      },
+      "output_variables": {
+        "open_role_id": "Airtable Record ID of first matching open role",
+        "open_role_title": "Role Title",
+        "open_role_required_skills": "Required Skills (comma-separated)",
+        "open_role_seniority_required": "Seniority Required",
+        "open_role_recruiter_name": "Recruiter Name",
+        "open_role_recruiter_email": "Recruiter Email",
+        "open_role_recruiter_slack_id": "Recruiter Slack ID (e.g. U012AB3CD)",
+        "open_role_clickup_list_id": "ClickUp List ID"
+      }
+    },
+    {
+      "step": 8,
+      "type": "action",
+      "label": "Compute Skill Match Score — Code by Zapier (JavaScript)",
+      "app": "Code by Zapier",
+      "event": "Run Javascript",
+      "config": {
+        "input_data": {
+          "candidate_skills": "{{step_4_skills}}",
+          "role_required_skills": "{{step_7_open_role_required_skills}}",
+          "open_role_id": "{{step_7_open_role_id}}"
+        },
+        "code": "const noRole = !inputData.open_role_id || inputData.open_role_id.trim() === '';\nif (noRole) {\n  return { match_score: 0, match_count: 0, is_match: 'false' };\n}\nconst candidateSkills = (inputData.candidate_skills || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);\nconst requiredSkills = (inputData.role_required_skills || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);\nif (requiredSkills.length === 0) {\n  return { match_score: 100, match_count: 0, is_match: 'true' };\n}\nlet matchCount = 0;\nfor (const skill of requiredSkills) {\n  if (candidateSkills.some(cs => cs.includes(skill) || skill.includes(cs))) {\n    matchCount++;\n  }\n}\nconst matchScore = Math.round((matchCount / requiredSkills.length) * 100);\nreturn {\n  match_score: matchScore,\n  match_count: matchCount,\n  is_match: matchScore >= 40 ? 'true' : 'false'\n};",
+        "note": "40% skill overlap threshold. Returns is_match=false if no open role was found. Handles empty required skills list gracefully."
+      },
+      "output_variables": {
+        "match_score": "0–100 percentage",
+        "match_count": "Number of matched required skills",
+        "is_match": "true or false"
+      }
+    },
+    {
+      "step": 9,
+      "type": "action",
+      "label": "Paths by Zapier — Match vs No Match",
+      "app": "Paths by Zapier",
+      "event": "Paths",
+      "config": {
+        "note": "Requires Zapier Professional plan. Both paths converge and steps 13–16 run regardless of path taken.",
+        "path_a": {
+          "label": "Skills Match",
+          "condition": "{{step_8_is_match}} (Text) Exactly matches true",
+          "steps": ["10", "11"]
+        },
+        "path_b": {
+          "label": "No Match / Pooled",
+          "condition": "{{step_8_is_match}} (Text) Does not exactly match true",
+          "steps": ["12"]
+        }
+      }
+    },
+    {
+      "step": 10,
+      "type": "action",
+      "label": "[PATH A] Create Task in ClickUp",
+      "app": "ClickUp",
+      "event": "New Task",
+      "config": {
+        "list_id": "{{step_7_open_role_clickup_list_id}}",
+        "task_name": "Review CV: {{candidate_name}} — {{step_4_primary_role_type}} ({{step_4_seniority}})",
+        "description": "**Candidate:** {{candidate_name}}\n**Email:** {{candidate_email}}\n**Current Title:** {{current_title}}\n**Experience:** {{years_experience}} years\n**Skills:** {{step_4_skills}}\n**Availability:** {{step_4_availability_signal}}\n**Match Score:** {{step_8_match_score}}%\n**AI Summary:** {{step_4_summary}}\n\n**CV:** {{cv_file_url}}\n**LinkedIn:** {{linkedin_url}}\n\n**Airtable Record:** https://airtable.com/{{AIRTABLE_BASE_ID}}/{{step_6_airtable_record_id}}",
+        "status": "To Review",
+        "priority": "normal",
+        "due_date_offset": "+3 days",
+        "assignee": "{{step_7_open_role_recruiter_name}}",
+        "tags": ["{{step_4_seniority}}", "{{step_4_primary_role_type}}", "new-cv"],
+        "note": "Creates task in the open role's designated ClickUp list. Due date is set 3 days out using Formatter date arithmetic before this step if needed."
+      },
+      "output_variables": {
+        "clickup_task_id": "ClickUp Task ID",
+        "clickup_task_url": "ClickUp Task URL"
+      }
+    },
+    {
+      "step": 11,
+      "type": "action",
+      "label": "[PATH A] Update Airtable — Status: Shortlisted",
+      "app": "Airtable",
+      "event": "Update Record",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Candidates",
+        "record_id": "{{step_6_airtable_record_id}}",
+        "field_mapping": {
+          "Status": "Shortlisted",
+          "ClickUp Task ID": "{{step_10_clickup_task_id}}",
+          "ClickUp Task URL": "{{step_10_clickup_task_url}}",
+          "Recruiter Notified": true,
+          "Matched Role": "{{step_7_open_role_id}}",
+          "Match Score": "{{step_8_match_score}}"
+        }
+      }
+    },
+    {
+      "step": 12,
+      "type": "action",
+      "label": "[PATH B] Update Airtable — Status: Pooled",
+      "app": "Airtable",
+      "event": "Update Record",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Candidates",
+        "record_id": "{{step_6_airtable_record_id}}",
+        "field_mapping": {
+          "Status": "Pooled",
+          "Match Score": "{{step_8_match_score}}"
+        }
+      }
+    },
+    {
+      "step": 13,
+      "type": "action",
+      "label": "Send Acknowledgement Email via Gmail",
+      "app": "Gmail",
+      "event": "Send Email",
+      "config": {
+        "to": "{{candidate_email}}",
+        "from": "{{RECRUITMENT_EMAIL}}",
+        "reply_to": "{{step_7_open_role_recruiter_email}}",
+        "subject": "We've received your application — {{candidate_name}}",
+        "body_type": "html",
+        "body": "<!DOCTYPE html><html><body style=\"font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: #1a2744; padding: 32px; text-align: center;\">\n  <h1 style=\"color: #ffffff; margin: 0; font-size: 22px;\">Application Received</h1>\n</div>\n<div style=\"padding: 32px;\">\n  <p>Hi {{candidate_name}},</p>\n  <p>Thank you for submitting your CV to <strong>{{COMPANY_NAME}}</strong>.</p>\n  <p>We've received your application and our team will review your profile against our current openings.</p>\n  <table style=\"border-collapse: collapse; width: 100%; margin: 24px 0;\">\n    <tr style=\"background: #f5f7fa;\"><td style=\"padding: 10px 14px; font-weight: bold;\">Role Interest</td><td style=\"padding: 10px 14px;\">{{role_interest}}</td></tr>\n    <tr><td style=\"padding: 10px 14px; font-weight: bold;\">Experience</td><td style=\"padding: 10px 14px;\">{{years_experience}} years</td></tr>\n    <tr style=\"background: #f5f7fa;\"><td style=\"padding: 10px 14px; font-weight: bold;\">Skills on file</td><td style=\"padding: 10px 14px;\">{{step_4_skills}}</td></tr>\n  </table>\n  <p>If your profile matches an open role, a member of our recruitment team will be in touch within <strong>5 business days</strong>. In the meantime, feel free to reply to this email with any questions.</p>\n  <p>Best regards,<br><strong>The {{COMPANY_NAME}} Recruitment Team</strong></p>\n</div>\n<div style=\"background: #f5f7fa; padding: 16px; text-align: center; font-size: 12px; color: #888;\">\n  {{COMPANY_NAME}} · {{COMPANY_ADDRESS}} · <a href=\"mailto:{{RECRUITMENT_EMAIL}}\">{{RECRUITMENT_EMAIL}}</a>\n</div>\n</body></html>",
+        "note": "Fires unconditionally after both Paths branches resolve. Keep the email neutral — do not reference whether a match was found."
+      }
+    },
+    {
+      "step": 14,
+      "type": "action",
+      "label": "Delay 3 Calendar Days",
+      "app": "Delay by Zapier",
+      "event": "Delay For",
+      "config": {
+        "delay_for_value": 3,
+        "delay_for_unit": "days",
+        "note": "Requires Zapier Professional plan. Pauses the Zap task for exactly 3 calendar days from when this step is reached. Use a 1-minute delay during development/testing."
+      }
+    },
+    {
+      "step": 15,
+      "type": "action",
+      "label": "Re-fetch Candidate Record from Airtable",
+      "app": "Airtable",
+      "event": "Find Record",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Candidates",
+        "record_id": "{{step_6_airtable_record_id}}",
+        "note": "Re-reads the record to get the current Status and Reminder Sent values, which may have changed while the Zap was delayed."
+      },
+      "output_variables": {
+        "current_status": "Current value of Status field",
+        "reminder_sent": "Current value of Reminder Sent checkbox"
+      }
+    },
+    {
+      "step": 16,
+      "type": "action",
+      "label": "Filter — Only if Still Shortlisted and Reminder Not Sent",
+      "app": "Filter by Zapier",
+      "event": "Filter",
+      "config": {
+        "conditions": [
+          {
+            "field": "{{step_15_current_status}}",
+            "operator": "exactly matches",
+            "value": "Shortlisted"
+          },
+          {
+            "field": "{{step_15_reminder_sent}}",
+            "operator": "is falsy"
+          }
+        ],
+        "logic": "AND",
+        "note": "Stops the Zap if the recruiter has already acted (status changed to Interview Scheduled, Contacted, Rejected, etc.) or if a reminder was already sent."
+      }
+    },
+    {
+      "step": 17,
+      "type": "action",
+      "label": "Send Slack Reminder to Recruiter",
+      "app": "Slack",
+      "event": "Send Direct Message",
+      "config": {
+        "to": "{{step_7_open_role_recruiter_slack_id}}",
+        "message_text": ":hourglass_flowing_sand: *CV Review Reminder*\n\nHi {{step_7_open_role_recruiter_name}}, a candidate submitted their CV 3 days ago and hasn't been reviewed yet.\n\n*Candidate:* {{candidate_name}}\n*Role Type:* {{step_4_primary_role_type}} ({{step_4_seniority}})\n*Skills:* {{step_4_skills}}\n*Availability:* {{step_4_availability_signal}}\n*Summary:* {{step_4_summary}}\n\n*Actions:*\n• :white_check_mark: Review in ClickUp → {{step_10_clickup_task_url}}\n• :card_index_dividers: View in Airtable → https://airtable.com/{{AIRTABLE_BASE_ID}}/{{step_6_airtable_record_id}}\n• :email: Contact candidate → {{candidate_email}}",
+        "note": "Sends a DM to the recruiter's Slack user ID (from the Open Role record). Falls back to #recruitment-alerts channel if preferred."
+      }
+    },
+    {
+      "step": 18,
+      "type": "action",
+      "label": "Update Airtable — Mark Reminder Sent",
+      "app": "Airtable",
+      "event": "Update Record",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Candidates",
+        "record_id": "{{step_6_airtable_record_id}}",
+        "field_mapping": {
+          "Reminder Sent": true,
+          "Reminder Sent Date": "{{zap_meta_humanize_time}}"
+        },
+        "note": "Prevents duplicate reminders if the Zap is accidentally re-triggered. Always runs immediately after the Slack step."
+      }
+    }
+  ],
+  "plan_notes": {
+    "minimum_plan": "Professional",
+    "paths_require": "Professional (Paths by Zapier)",
+    "delay_require": "Professional (delays over 1 hour)",
+    "code_require": "Starter+",
+    "webhook_require": "Professional"
+  }
+}

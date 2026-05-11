@@ -1,0 +1,61 @@
+{
+  "metadata": {
+    "name": "Candidate Pipeline — Parse Error Alert",
+    "description": "Companion Zap that fires when the Claude AI parsing step fails and the main pipeline sets Status to 'Needs Manual Review'. Queries Airtable for records in this state and sends a Slack alert to the recruitment ops channel so the record can be reviewed and corrected manually.",
+    "platform": "Zapier",
+    "version": "1.0.0",
+    "plan_required": "Starter+",
+    "status": "production",
+    "trigger": "Scheduled (every 1 hour) — polls Airtable for new 'Needs Manual Review' records",
+    "tags": ["recruitment", "error-handling", "airtable", "slack"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "type": "trigger",
+      "label": "New Airtable Record — Status = Needs Manual Review",
+      "app": "Airtable",
+      "event": "New Record in View",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Candidates",
+        "view": "Needs Manual Review",
+        "note": "Create a filtered view in Airtable named 'Needs Manual Review' that shows records where Status = 'Needs Manual Review' AND the record was created in the last 24h. Zapier polls this view every 5–15 minutes."
+      },
+      "output_variables": {
+        "record_id": "Airtable Record ID",
+        "candidate_name": "Name field",
+        "candidate_email": "Email field",
+        "submission_date": "Submission Date",
+        "parse_error_note": "AI Summary (will contain error context or be empty)"
+      }
+    },
+    {
+      "step": 2,
+      "type": "action",
+      "label": "Send Slack Alert to Recruitment Ops",
+      "app": "Slack",
+      "event": "Send Channel Message",
+      "config": {
+        "channel": "{{SLACK_OPS_CHANNEL}}",
+        "message_text": ":warning: *CV Parse Failure — Manual Review Required*\n\nA candidate submission could not be automatically parsed by the AI parser.\n\n*Candidate:* {{candidate_name}}\n*Email:* {{candidate_email}}\n*Submitted:* {{submission_date}}\n\n*Action required:*\n• Review the record in Airtable and populate Skills, Seniority, Role Type, and Availability manually.\n• Then update the Status to 'New' or 'Shortlisted' as appropriate.\n\n:card_index_dividers: *View Record →* https://airtable.com/{{AIRTABLE_BASE_ID}}/{{record_id}}"
+      }
+    },
+    {
+      "step": 3,
+      "type": "action",
+      "label": "Update Airtable — Set Alert Sent Flag",
+      "app": "Airtable",
+      "event": "Update Record",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Candidates",
+        "record_id": "{{record_id}}",
+        "field_mapping": {
+          "Ops Alerted": true
+        },
+        "note": "Prevents the alert firing again on the next poll. Add an 'Ops Alerted' checkbox field to the Candidates table and filter the view by Ops Alerted = false."
+      }
+    }
+  ]
+}

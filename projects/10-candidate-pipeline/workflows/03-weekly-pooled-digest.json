@@ -1,0 +1,104 @@
+{
+  "metadata": {
+    "name": "Candidate Pipeline — Weekly Pooled Digest",
+    "description": "Scheduled Zap that runs every Monday at 9am and matches Pooled candidates against newly opened roles from the past 7 days. If any matches are found it sends a digest to the recruitment Slack channel so recruiters can surface candidates who were missed first time around.",
+    "platform": "Zapier",
+    "version": "1.0.0",
+    "plan_required": "Professional",
+    "status": "production",
+    "tags": ["recruitment", "talent-pool", "airtable", "slack", "scheduled"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "type": "trigger",
+      "label": "Schedule — Every Monday at 9am",
+      "app": "Schedule by Zapier",
+      "event": "Every Week",
+      "config": {
+        "day_of_week": "Monday",
+        "time_of_day": "09:00",
+        "timezone": "{{COMPANY_TIMEZONE}}"
+      }
+    },
+    {
+      "step": 2,
+      "type": "action",
+      "label": "Fetch All Pooled Candidates",
+      "app": "Airtable",
+      "event": "Find Records",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Candidates",
+        "filter_by_formula": "{Status}='Pooled'",
+        "max_records": 50,
+        "note": "Pulls all pooled candidates. Limited to 50 per run to stay within Zapier's output limits."
+      },
+      "output_variables": {
+        "pooled_candidates": "Array of candidate records (name, email, role_type, skills, seniority, submission_date)"
+      }
+    },
+    {
+      "step": 3,
+      "type": "action",
+      "label": "Fetch Roles Opened in Last 7 Days",
+      "app": "Airtable",
+      "event": "Find Records",
+      "config": {
+        "base": "{{AIRTABLE_BASE_ID}}",
+        "table": "Open Roles",
+        "filter_by_formula": "AND({Status}='Open', IS_AFTER({Date Opened}, DATEADD(TODAY(), -7, 'days')))",
+        "note": "Returns only roles that were opened (or reopened) in the last 7 days to surface fresh opportunities for pooled candidates."
+      },
+      "output_variables": {
+        "new_roles": "Array of new open role records"
+      }
+    },
+    {
+      "step": 4,
+      "type": "action",
+      "label": "Match Pooled Candidates to New Roles — Code by Zapier",
+      "app": "Code by Zapier",
+      "event": "Run Javascript",
+      "config": {
+        "input_data": {
+          "pooled_candidates_json": "{{step_2_pooled_candidates}}",
+          "new_roles_json": "{{step_3_new_roles}}"
+        },
+        "code": "const candidates = JSON.parse(inputData.pooled_candidates_json || '[]');\nconst roles = JSON.parse(inputData.new_roles_json || '[]');\nconst matches = [];\nfor (const candidate of candidates) {\n  const cSkills = (candidate.skills || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);\n  for (const role of roles) {\n    const rSkills = (role.required_skills || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);\n    if (rSkills.length === 0) continue;\n    let count = 0;\n    for (const rs of rSkills) {\n      if (cSkills.some(cs => cs.includes(rs) || rs.includes(cs))) count++;\n    }\n    const score = Math.round((count / rSkills.length) * 100);\n    if (score >= 40) {\n      matches.push({\n        candidate_name: candidate.name,\n        candidate_email: candidate.email,\n        role_title: role.role_title,\n        match_score: score,\n        candidate_record_id: candidate.id,\n        role_record_id: role.id\n      });\n    }\n  }\n}\nmatches.sort((a, b) => b.match_score - a.match_score);\nconst lines = matches.slice(0, 10).map(m =>\n  `• *${m.candidate_name}* → *${m.role_title}* (${m.match_score}% match) — ${m.candidate_email}`\n).join('\\n');\nreturn {\n  match_count: matches.length,\n  digest_lines: lines || 'No new matches found.',\n  has_matches: matches.length > 0 ? 'true' : 'false'\n};"
+      },
+      "output_variables": {
+        "match_count": "Number of matches found",
+        "digest_lines": "Formatted slack message lines",
+        "has_matches": "true or false"
+      }
+    },
+    {
+      "step": 5,
+      "type": "action",
+      "label": "Filter — Only Continue if Matches Found",
+      "app": "Filter by Zapier",
+      "event": "Filter",
+      "config": {
+        "conditions": [
+          {
+            "field": "{{step_4_has_matches}}",
+            "operator": "exactly matches",
+            "value": "true"
+          }
+        ]
+      }
+    },
+    {
+      "step": 6,
+      "type": "action",
+      "label": "Send Weekly Digest to Slack",
+      "app": "Slack",
+      "event": "Send Channel Message",
+      "config": {
+        "channel": "{{SLACK_RECRUITMENT_CHANNEL}}",
+        "message_text": ":busts_in_silhouette: *Weekly Talent Pool Digest*\n\n{{step_4_match_count}} pooled candidate(s) match newly opened roles from the past 7 days.\n\n{{step_4_digest_lines}}\n\nReview and shortlist candidates in Airtable → https://airtable.com/{{AIRTABLE_BASE_ID}}"
+      }
+    }
+  ]
+}

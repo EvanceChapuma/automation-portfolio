@@ -1,0 +1,126 @@
+{
+  "table_name": "Open Roles",
+  "description": "Each record is an open position. The main pipeline queries this table to find roles matching the candidate's parsed role type and scores skill overlap. Recruiters maintain this table — adding, closing, and reopening roles as the business needs change.",
+  "fields": [
+    {
+      "name": "Role Title",
+      "type": "Single line text",
+      "primary": true,
+      "required": true,
+      "example": "Senior Backend Engineer"
+    },
+    {
+      "name": "Role Type",
+      "type": "Single select",
+      "required": true,
+      "options": ["Engineering", "Design", "Product", "Marketing", "Operations", "Sales", "Legal", "Finance", "Other"],
+      "notes": "Must exactly match the options in Candidates.Role Type — the pipeline filters by equality"
+    },
+    {
+      "name": "Required Skills",
+      "type": "Long text",
+      "required": true,
+      "notes": "Comma-separated keyword list used for skill match scoring. Example: Python, SQL, FastAPI, Docker, AWS. More specific terms produce more precise scores.",
+      "example": "Python, SQL, FastAPI, Docker, AWS, PostgreSQL, REST APIs"
+    },
+    {
+      "name": "Seniority Required",
+      "type": "Single select",
+      "required": false,
+      "options": ["Junior", "Mid", "Senior", "Lead", "Executive"],
+      "notes": "Used for display in the ClickUp task title and Slack reminder. Not used in the skill match filter (seniority is informational only in v1.0)."
+    },
+    {
+      "name": "Status",
+      "type": "Single select",
+      "required": true,
+      "options": ["Open", "On Hold", "Filled"],
+      "default": "Open",
+      "notes": "Only records with Status=Open are returned by the pipeline's Airtable lookup"
+    },
+    {
+      "name": "Date Opened",
+      "type": "Date",
+      "required": false,
+      "notes": "Used by the weekly pooled digest Zap (03) to find roles opened in the past 7 days"
+    },
+    {
+      "name": "Recruiter Name",
+      "type": "Single line text",
+      "required": true,
+      "notes": "Used as the ClickUp task assignee and in the Slack reminder greeting"
+    },
+    {
+      "name": "Recruiter Email",
+      "type": "Email",
+      "required": false,
+      "notes": "Set as Reply-To on the candidate acknowledgement email"
+    },
+    {
+      "name": "Recruiter Slack ID",
+      "type": "Single line text",
+      "required": true,
+      "notes": "Slack member ID in the format U012AB3CD. Found via Slack → Profile → More → Copy Member ID. Used for the step 17 DM.",
+      "example": "U012AB3CD"
+    },
+    {
+      "name": "ClickUp List ID",
+      "type": "Single line text",
+      "required": true,
+      "notes": "The ClickUp List ID where CV review tasks are created for this role. Found in the ClickUp URL when viewing the list: app.clickup.com/t/LIST_ID.",
+      "example": "901522903678"
+    },
+    {
+      "name": "Candidates",
+      "type": "Link to another record",
+      "linked_table": "Candidates",
+      "required": false,
+      "notes": "Reverse link — automatically populated when Candidates.Matched Role is set"
+    },
+    {
+      "name": "Department",
+      "type": "Single line text",
+      "required": false,
+      "example": "Engineering"
+    },
+    {
+      "name": "Location / Remote Policy",
+      "type": "Single select",
+      "required": false,
+      "options": ["Remote", "Hybrid", "On-Site"],
+      "notes": "Informational — surfaced in the ClickUp task description in future versions"
+    },
+    {
+      "name": "Notes",
+      "type": "Long text",
+      "required": false,
+      "notes": "Internal recruiter notes about the role requirements, team context, or hiring constraints"
+    }
+  ],
+  "views": [
+    {
+      "name": "Open Roles",
+      "type": "Grid",
+      "filter": {"Status": "Open"},
+      "sort": [{"field": "Date Opened", "direction": "desc"}],
+      "notes": "Default view for recruiters managing active roles"
+    },
+    {
+      "name": "All Roles",
+      "type": "Grid",
+      "sort": [{"field": "Role Title", "direction": "asc"}]
+    },
+    {
+      "name": "By Role Type",
+      "type": "Grid",
+      "group_by": "Role Type",
+      "filter": {"Status": "Open"}
+    }
+  ],
+  "setup_notes": [
+    "Populate at least one Open Role before testing the main pipeline — a zero-result lookup routes all candidates directly to Pooled.",
+    "Ensure Role Type values exactly match the options in the Candidates table — the pipeline filters by string equality.",
+    "Required Skills should use lowercase keywords and avoid abbreviations not used in CVs (e.g. use 'machine learning' not 'ML' if candidates write 'machine learning' in their cover notes).",
+    "ClickUp List IDs can be found in the browser URL when viewing a list in ClickUp: app.clickup.com/WORKSPACE_ID/v/l/LIST_ID"
+  ]
+}

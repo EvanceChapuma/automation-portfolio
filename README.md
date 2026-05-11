@@ -40,6 +40,7 @@ I don't just connect APIs. I design systems that handle edge cases, fail gracefu
 | 07 | [AI Law Firm Receptionist](#07-ai-law-firm-receptionist) | 8-workflow autonomous receptionist — triage, intake, scheduling, conflict checks, billing, documents | n8n · Claude · Clio · Google Calendar · Zoom · Gmail · Slack | [→](./projects/07-law-firm-receptionist/) |
 | 08 | [Weekly KPI Summary — Wellness Practice](#08-weekly-kpi-summary--wellness-practice) | Automated weekly business report — parallel Airtable fetching, JS KPI calculation, AI insights, branded HTML email | n8n · Airtable · Claude Sonnet · Gmail | [→](./projects/08-hackensack-weekly-kpi/) |
 | 09 | [Real Estate — Lead-to-Close Automation](#09-real-estate--lead-to-close-automation) | Two-workflow pipeline: W1 AI-qualifies inbound leads and routes them to ClickUp, books discovery calls, and alerts the agent; W2 fires when a deal is Won and provisions the full client project across Drive, ClickUp, Gmail, and Slack in under 60 seconds | n8n · Claude Opus · Claude Sonnet · ClickUp · Google Drive · Google Calendar · Gmail · Slack | [→](./projects/09-real-estate-lead-to-close/) |
+| 10 | [Candidate Pipeline Automation](#10-candidate-pipeline-automation) | End-to-end Zapier recruitment pipeline — Claude AI parses CV submissions from Typeform, scores skill overlap against open roles, routes to Shortlisted or Talent Pool in Airtable, creates a ClickUp review task, sends an acknowledgement email, and fires a Slack recruiter reminder after 3 days if no action taken | Zapier · Claude Sonnet · Typeform · Airtable · ClickUp · Gmail · Slack | [→](./projects/10-candidate-pipeline/) |
 
 ---
 
@@ -115,6 +116,22 @@ An 8-workflow autonomous receptionist stack for law firms. An AI triage agent cl
 
 ---
 
+### 10 — Candidate Pipeline Automation
+
+A three-Zap Zapier system that automates the full CV intake-to-review cycle for a recruitment team.
+
+**Zap 1 — Main Pipeline (18 steps):** A Typeform CV submission triggers the pipeline. Before creating any record, the Zap checks Airtable by email for a duplicate — updating on resubmission instead of creating a duplicate. Claude Sonnet receives the candidate's form fields and parses them into a structured JSON object (skills, seniority, role type, availability, profile summary) via a direct Anthropic API call. A Code step wraps the JSON.parse in a try/catch — parse failures set Status to `Needs Manual Review` rather than silently creating broken records. The candidate record is upserted to Airtable, then the pipeline looks up all open roles matching the candidate's role type. A second Code step computes a skill overlap score (0–100%) using substring matching across both lists. Paths by Zapier branches: a score ≥ 40% creates a ClickUp CV review task in the role's designated list and sets Airtable Status to `Shortlisted`; below the threshold sets Status to `Pooled`. Both paths converge — a neutral acknowledgement email fires for every candidate. The Zap then pauses 3 calendar days using Delay by Zapier, re-fetches the Airtable record to read the live Status (not the cached value), and sends a Slack DM to the recruiter if the record is still `Shortlisted` and `Reminder Sent = false`. A final Airtable update marks `Reminder Sent = true`.
+
+**Zap 2 — Parse Error Handler:** Polls the Airtable `Needs Manual Review` view every 15 minutes. When a new record appears, it sends a Slack ops alert with the candidate name, email, and a direct Airtable link, then sets `Ops Alerted = true` to prevent duplicate alerts.
+
+**Zap 3 — Weekly Pooled Digest:** Runs every Monday at 9am. Fetches all `Pooled` candidates and all roles opened in the past 7 days, runs the same skill overlap algorithm, and posts a ranked Slack digest to the recruitment channel — surfacing candidates who were pooled before a matching role existed.
+
+**Impact:** Every CV submission is captured, parsed, scored, routed, and acknowledged within seconds — with no human triage required. Recruiters receive a ClickUp task for every relevant candidate and a Slack nudge if they haven't reviewed it within 3 days.
+
+[View project →](./projects/10-candidate-pipeline/)
+
+---
+
 ### 09 — Real Estate — Lead-to-Close Automation
 
 A two-workflow n8n system covering the full real estate pipeline from first inquiry to closed deal.
@@ -158,7 +175,8 @@ automation-portfolio/
 │   ├── 06-whatsapp-event-registration/
 │   ├── 07-law-firm-receptionist/
 │   ├── 08-hackensack-weekly-kpi/
-│   └── 09-real-estate-lead-to-close/
+│   ├── 09-real-estate-lead-to-close/
+│   └── 10-candidate-pipeline/
 ├── templates/
 │   └── workflow-readme-template.md
 ├── .github/
